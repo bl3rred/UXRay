@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uxray-fetch"
+version = "0.1.0"
+description = "Fetch.ai sponsor-track multi-agent evaluation layer for UXRay"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "pydantic>=2.9.0",
+  "python-dotenv>=1.0.1",
+  "uagents>=0.24.0",
+  "uvicorn>=0.32.0",
+  "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uxray_fetch*"]

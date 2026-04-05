@@ -1,0 +1,22 @@
+{
+  "project_name": "UXRay Demo",
+  "project_url": "https://example.com",
+  "issues": [
+    {
+      "issue_id": "issue_1",
+      "issue_title": "Primary CTA appears disabled",
+      "route": "/signup",
+      "persona": "first_time_visitor",
+      "viewport": "desktop",
+      "issue_type": "cta_feedback",
+      "severity": "high",
+      "evidence": [
+        "No loading state",
+        "No success feedback"
+      ],
+      "screenshot_summary": "CTA looks disabled after click",
+      "dom_snippet": "<button disabled>Start free</button>",
+      "custom_audience": null
+    }
+  ]
+}
