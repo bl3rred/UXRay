@@ -100,49 +100,49 @@ UXRay includes a hosted Fetch.ai evaluation layer that reviews analyzer findings
 
 Primary Fetch.ai coordination agent for UXRay. It accepts an issue packet, fans work out to the specialist audience agents, collects their judgments, sends the combined result through boss review and synthesis, and returns the final recommendation path back to UXRay.
 
-Agentverse profile: [uxray_orchestrator_agent](https://agentverse.ai/agents/details/agent1qdmxcxuh7yqnylqh3yq469spuv9m9alsf2a9zv5gvqypf0kqx52njyyfm0y/profile)
+Agentverse profile: [uxray_orchestrator_agent](https://agentverse.ai/agents/details/agent1qf94pffvtkrmzea0sckhzefs46rkm6nhznpngmc3c34vwevhse44uvcwcdm/profile)
 
 #### `uxray_first_time_visitor_agent`
 
 Audience specialist that judges issues from a new user perspective. It focuses on orientation, clarity, messaging comprehension, and whether the next step is obvious for someone seeing the experience for the first time.
 
-Agentverse profile: [uxray_first_time_visitor_agent](https://agentverse.ai/agents/details/agent1qf94pffvtkrmzea0sckhzefs46rkm6nhznpngmc3c34vwevhse44uvcwcdm/profile)
+Agentverse profile: [uxray_first_time_visitor_agent](https://agentverse.ai/agents/details/agent1qdm5l0n32p9v4cm6mfl3hplc4f6dk7jwyt852rm3lj2v4yr0pdfkjhva98a/profile)
 
 #### `uxray_intent_driven_agent`
 
 Audience specialist that judges issues from a goal driven perspective. It focuses on speed to value, CTA clarity, path efficiency, and friction on the shortest route to completing a task.
 
-Agentverse profile: [uxray_intent_driven_agent](https://agentverse.ai/agents/details/agent1q2pcaheuk4v38us6qwz322mmvw762vxhz7mvu2gcu5pcwmz2n56nu05nqhg/profile)
+Agentverse profile: [uxray_intent_driven_agent](https://agentverse.ai/agents/details/agent1qvpvz663lx4rgarnck9rljlfvavz7u7kavtqf6c9jrzsjdtm020pj99a5j2/profile)
 
 #### `uxray_trust_evaluator_agent`
 
 Audience specialist that judges issues from a skeptical buyer or evaluator perspective. It focuses on credibility, reassurance, support visibility, trust cues, and hesitation around conversion.
 
-Agentverse profile: [uxray_trust_evaluator_agent](https://agentverse.ai/agents/details/agent1qf6wwrjcgth40ddftxnnvv5gtktx0twm54u8ejh6cvxqcredpyyc5xz9q5t/profile)
+Agentverse profile: [uxray_trust_evaluator_agent](https://agentverse.ai/agents/details/agent1q023pe7rzeka0fngr00kskwqfajse7z9wzlf27vh033tafudf00hwrzre8p/profile)
 
 #### `uxray_custom_audience_agent`
 
 Audience specialist for a user defined lens. It applies the same review structure as the core specialists, but tailors the judgment to the custom audience context provided by UXRay.
 
-Agentverse profile: [uxray_custom_audience_agent](https://agentverse.ai/agents/details/agent1q023pe7rzeka0fngr00kskwqfajse7z9wzlf27vh033tafudf00hwrzre8p/profile)
+Agentverse profile: [uxray_custom_audience_agent](https://agentverse.ai/agents/details/agent1qfnm567yvg6vhgd8p5wnmxuy4ny7wduw2qmgld7wvl9ung2hmmsxysvdh42/profile)
 
 #### `uxray_boss_agent`
 
 Decision gate that reviews the specialist opinions and determines whether an issue has strong, mixed, or weak agreement before final recommendation synthesis.
 
-Agentverse profile: [uxray_boss_agent](https://agentverse.ai/agents/details/agent1qfnm567yvg6vhgd8p5wnmxuy4ny7wduw2qmgld7wvl9ung2hmmsxysvdh42/profile)
+Agentverse profile: [uxray_boss_agent](https://agentverse.ai/agents/details/agent1qf6wwrjcgth40ddftxnnvv5gtktx0twm54u8ejh6cvxqcredpyyc5xz9q5t/profile)
 
 #### `uxray_synthesis_agent`
 
 Final recommendation agent that converts the issue packet plus specialist and boss signals into a concise, implementation oriented recommendation. This is the last step in the hosted Fetch review chain before UXRay stores the result.
 
-Agentverse profile: [uxray_synthesis_agent](https://agentverse.ai/agents/details/agent1qvpvz663lx4rgarnck9rljlfvavz7u7kavtqf6c9jrzsjdtm020pj99a5j2/profile)
+Agentverse profile: [uxray_synthesis_agent](https://agentverse.ai/agents/details/agent1q2pcaheuk4v38us6qwz322mmvw762vxhz7mvu2gcu5pcwmz2n56nu05nqhg/profile)
 
 #### `uxray_mailbox_relay_agent`
 
 Mailbox connected return path agent used by the local relay stack. It is not a specialist reviewer. It exists so the hosted orchestrator has a live Agentverse mailbox address to send results back to.
 
-Agentverse profile: [uxray_mailbox_relay_agent](https://agentverse.ai/agents/details/agent1qdm5l0n32p9v4cm6mfl3hplc4f6dk7jwyt852rm3lj2v4yr0pdfkjhva98a/profile)
+Agentverse profile: [uxray_mailbox_relay_agent](https://agentverse.ai/agents/details/agent1qdmxcxuh7yqnylqh3yq469spuv9m9alsf2a9zv5gvqypf0kqx52njyyfm0y/profile)
 
 ### Local Relay Infrastructure
 
