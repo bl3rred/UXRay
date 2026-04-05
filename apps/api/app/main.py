@@ -14,9 +14,10 @@ from app.db import SQLiteStore
 from app.routes import projects, runs
 from app.schemas import APIEnvelope
 from app.services.evaluation import FetchEvaluationService
+from app.services.preview_tunnel import CloudflaredTunnelManager
 from app.services.queue import RunWorker
 from app.services.repo_builder import LocalRepoBuilder
-from app.services.source_review import GPTSourceReviewService
+from app.services.source_review import GeminiSourceReviewService
 
 
 def create_app(
@@ -24,6 +25,7 @@ def create_app(
     adapter=None,
     auth_service=None,
     repo_builder=None,
+    tunnel_manager=None,
     source_reviewer=None,
 ) -> FastAPI:
     resolved_config = config or AppConfig.from_env()
@@ -53,7 +55,11 @@ def create_app(
         enabled=resolved_config.local_repo_build_enabled,
         build_root=resolved_config.local_repo_build_root,
     )
-    resolved_source_reviewer = source_reviewer or GPTSourceReviewService(
+    resolved_tunnel_manager = tunnel_manager or CloudflaredTunnelManager(
+        enabled=resolved_config.repo_preview_tunnel_enabled,
+        binary=resolved_config.repo_preview_tunnel_binary,
+    )
+    resolved_source_reviewer = source_reviewer or GeminiSourceReviewService(
         enabled=resolved_config.source_review_enabled,
         api_key=resolved_config.source_review_api_key,
         model=resolved_config.source_review_model,
@@ -68,12 +74,18 @@ def create_app(
             agent_url=resolved_config.fetch_evaluation_agent_url,
             api_key=resolved_config.fetch_evaluation_api_key,
             timeout_seconds=resolved_config.fetch_evaluation_timeout_seconds,
+            agentverse_api_key=resolved_config.fetch_relay_agentverse_api_key,
+            relay_agent_address=resolved_config.fetch_relay_agent_address,
+            relay_orchestrator_address=resolved_config.fetch_relay_orchestrator_address,
             asi_api_key=resolved_config.fetch_evaluation_asi_api_key,
             asi_model=resolved_config.fetch_evaluation_asi_model,
         ),
         repo_builder=resolved_repo_builder,
+        tunnel_manager=resolved_tunnel_manager,
         source_reviewer=resolved_source_reviewer,
         poll_seconds=resolved_config.queue_poll_seconds,
+        source_review_queue_retry_attempts=resolved_config.source_review_queue_retry_attempts,
+        source_review_retry_delay_seconds=resolved_config.source_review_retry_delay_seconds,
     )
 
     @asynccontextmanager
@@ -86,6 +98,7 @@ def create_app(
             if resolved_config.start_worker:
                 worker.stop()
             worker.repo_builder.close()
+            worker.tunnel_manager.close()
             resolved_auth_service.close()
 
     app = FastAPI(title="UXRay API", lifespan=lifespan)
@@ -110,6 +123,7 @@ def create_app(
                 "browser_use_model": resolved_config.browser_use_model,
                 "fetch_evaluation_enabled": resolved_config.fetch_evaluation_enabled,
                 "local_repo_build_enabled": resolved_config.local_repo_build_enabled,
+                "repo_preview_tunnel_enabled": resolved_config.repo_preview_tunnel_enabled,
                 "source_review_enabled": resolved_config.source_review_enabled,
             }
         )

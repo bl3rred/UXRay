@@ -26,3 +26,14 @@ def test_config_marks_fetch_evaluation_disabled_by_default(monkeypatch) -> None:
     assert config.fetch_evaluation_agent_url is None
     assert config.fetch_evaluation_api_key is None
     assert config.fetch_evaluation_timeout_seconds == 180.0
+
+
+def test_config_enables_repo_preview_tunnel_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("UXRAY_REPO_PREVIEW_TUNNEL_ENABLED", raising=False)
+    monkeypatch.delenv("UXRAY_REPO_PREVIEW_TUNNEL_BINARY", raising=False)
+    monkeypatch.setattr(config_module, "_load_env_file", lambda path: None)
+
+    config = AppConfig.from_env()
+
+    assert config.repo_preview_tunnel_enabled is True
+    assert config.repo_preview_tunnel_binary == "cloudflared"

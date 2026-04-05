@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = ROOT_DIR / "apps" / "api" / "data" / "uxray.db"
 DEFAULT_ARTIFACTS_DIR = ROOT_DIR / "apps" / "api" / "data" / "artifacts"
-DEFAULT_LOCAL_REPO_BUILD_ROOT = Path.home() / "Desktop" / "uxray-buildStorage"
+DEFAULT_LOCAL_REPO_BUILD_ROOT = ROOT_DIR / "apps" / "api" / "data" / "repo-builds"
 ENV_FILE = ROOT_DIR / ".env.local"
 SUPPORTED_BROWSER_USE_MODELS = frozenset(
     {
@@ -55,16 +55,23 @@ class AppConfig:
     supabase_storage_bucket: str | None = None
     local_repo_build_enabled: bool = True
     local_repo_build_root: Path = DEFAULT_LOCAL_REPO_BUILD_ROOT
+    repo_preview_tunnel_enabled: bool = True
+    repo_preview_tunnel_binary: str = "cloudflared"
     fetch_evaluation_enabled: bool = False
     fetch_evaluation_agent_url: str | None = None
     fetch_evaluation_api_key: str | None = None
     fetch_evaluation_timeout_seconds: float = 180.0
+    fetch_relay_agentverse_api_key: str | None = None
+    fetch_relay_agent_address: str | None = None
+    fetch_relay_orchestrator_address: str | None = None
     fetch_evaluation_asi_api_key: str | None = None
     fetch_evaluation_asi_model: str = "asi1-mini"
     source_review_enabled: bool = False
     source_review_api_key: str | None = None
-    source_review_model: str = "gpt-5-mini"
+    source_review_model: str = "gemini-3.1-flash-lite-preview"
     source_review_timeout_seconds: float = 45.0
+    source_review_queue_retry_attempts: int = 1
+    source_review_retry_delay_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -91,12 +98,17 @@ class AppConfig:
             local_repo_build_root=Path(
                 os.getenv("UXRAY_LOCAL_REPO_BUILD_ROOT", str(DEFAULT_LOCAL_REPO_BUILD_ROOT))
             ),
+            repo_preview_tunnel_enabled=_env_bool("UXRAY_REPO_PREVIEW_TUNNEL_ENABLED", True),
+            repo_preview_tunnel_binary=os.getenv("UXRAY_REPO_PREVIEW_TUNNEL_BINARY", "cloudflared"),
             fetch_evaluation_enabled=_env_bool("FETCH_EVALUATION_ENABLED", False),
             fetch_evaluation_agent_url=os.getenv("FETCH_EVALUATION_AGENT_URL"),
             fetch_evaluation_api_key=os.getenv("FETCH_EVALUATION_API_KEY"),
             fetch_evaluation_timeout_seconds=float(
                 os.getenv("FETCH_EVALUATION_TIMEOUT_SECONDS", "180.0")
             ),
+            fetch_relay_agentverse_api_key=os.getenv("AGENTVERSE_API_KEY"),
+            fetch_relay_agent_address=os.getenv("FETCH_RELAY_AGENT_ADDRESS"),
+            fetch_relay_orchestrator_address=os.getenv("FETCH_RELAY_ORCHESTRATOR_ADDRESS"),
             fetch_evaluation_asi_api_key=os.getenv("ASI_ONE_API_KEY"),
             fetch_evaluation_asi_model=os.getenv(
                 "FETCH_RELAY_ASI_MODEL",
@@ -104,12 +116,21 @@ class AppConfig:
             ),
             source_review_enabled=_env_bool(
                 "SOURCE_REVIEW_ENABLED",
-                bool(os.getenv("OPENAI_API_KEY")),
+                bool(os.getenv("GEMINI_API_KEY")),
             ),
-            source_review_api_key=os.getenv("OPENAI_API_KEY"),
-            source_review_model=os.getenv("SOURCE_REVIEW_MODEL", "gpt-5-mini"),
+            source_review_api_key=os.getenv("GEMINI_API_KEY"),
+            source_review_model=os.getenv(
+                "SOURCE_REVIEW_MODEL",
+                "gemini-3.1-flash-lite-preview",
+            ),
             source_review_timeout_seconds=float(
                 os.getenv("SOURCE_REVIEW_TIMEOUT_SECONDS", "45.0")
+            ),
+            source_review_queue_retry_attempts=int(
+                os.getenv("SOURCE_REVIEW_QUEUE_RETRY_ATTEMPTS", "1")
+            ),
+            source_review_retry_delay_seconds=float(
+                os.getenv("SOURCE_REVIEW_RETRY_DELAY_SECONDS", "30.0")
             ),
         )
         config.validate()

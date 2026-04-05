@@ -19,7 +19,7 @@ class SourceReviewResult:
     error: str | None = None
 
 
-class GPTSourceReviewService:
+class GeminiSourceReviewService:
     def __init__(
         self,
         *,
@@ -57,76 +57,67 @@ class GPTSourceReviewService:
             return SourceReviewResult(
                 status="skipped",
                 recommendations=[],
-                error="No supported frontend source files were found for GPT review.",
+                error="No supported frontend source files were found for Gemini review.",
             )
 
         payload = {
-            "model": self.model,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "You review frontend source code for UXRay. "
-                                "Return compact, implementation-ready UX/code recommendations that "
-                                "strengthen clarity, conversion feedback, trust cues, and flow polish. "
-                                "Avoid security, backend, or architecture advice unless it directly "
-                                "affects the current UX findings."
-                            ),
-                        }
-                    ],
-                },
+            "system_instruction": {
+                "parts": [
+                    {
+                        "text": (
+                            "You review frontend source code for UXRay. "
+                            "Return compact, implementation-ready UX/code recommendations that "
+                            "strengthen clarity, conversion feedback, trust cues, and flow polish. "
+                            "Avoid security, backend, or architecture advice unless it directly "
+                            "affects the current UX findings."
+                        )
+                    }
+                ]
+            },
+            "contents": [
                 {
                     "role": "user",
-                    "content": [
+                    "parts": [
                         {
-                            "type": "input_text",
                             "text": self._build_user_prompt(
                                 project_name=project_name,
                                 framework=framework,
                                 issues=issues,
                                 repo_context=context,
-                            ),
+                            )
                         }
                     ],
-                },
-            ],
-            "max_output_tokens": 1400,
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "uxray_source_review",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "recommendations": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "title": {"type": "string"},
-                                        "summary": {"type": "string"},
-                                        "likely_fix": {"type": "string"},
-                                    },
-                                    "required": ["title", "summary", "likely_fix"],
-                                    "additionalProperties": False,
-                                },
-                                "minItems": 2,
-                                "maxItems": 5,
-                            }
-                        },
-                        "required": ["recommendations"],
-                        "additionalProperties": False,
-                    },
                 }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "recommendations": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "title": {"type": "STRING"},
+                                    "summary": {"type": "STRING"},
+                                    "likely_fix": {"type": "STRING"},
+                                },
+                                "required": ["title", "summary", "likely_fix"],
+                                "propertyOrdering": ["title", "summary", "likely_fix"],
+                            },
+                            "minItems": 2,
+                            "maxItems": 5,
+                        }
+                    },
+                    "required": ["recommendations"],
+                    "propertyOrdering": ["recommendations"],
+                },
             },
         }
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "x-goog-api-key": self.api_key,
             "Content-Type": "application/json",
         }
 
@@ -148,21 +139,21 @@ class GPTSourceReviewService:
                 return SourceReviewResult(
                     status="failed",
                     recommendations=[],
-                    error="GPT source review returned no actionable recommendations.",
+                    error="Gemini source review returned no actionable recommendations.",
                 )
             return SourceReviewResult(status="completed", recommendations=recommendations, error=None)
         except httpx.TimeoutException:
             return SourceReviewResult(
                 status="failed",
                 recommendations=[],
-                error="GPT source review timed out before returning recommendations.",
+                error="Gemini source review timed out before returning recommendations.",
             )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 return SourceReviewResult(
                     status="failed",
                     recommendations=[],
-                    error="GPT source review is currently rate limited by OpenAI (429).",
+                    error="Gemini source review is currently rate limited (429).",
                 )
             return SourceReviewResult(status="failed", recommendations=[], error=str(exc))
         except Exception as exc:
@@ -176,13 +167,14 @@ class GPTSourceReviewService:
     ) -> httpx.Response:
         last_error: httpx.HTTPStatusError | None = None
         attempts = max(self.retry_attempts, 0) + 1
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         for attempt in range(1, attempts + 1):
             with httpx.Client(
                 transport=self.transport,
                 timeout=self.timeout_seconds,
             ) as client:
                 response = client.post(
-                    "https://api.openai.com/v1/responses",
+                    url,
                     headers=headers,
                     json=payload,
                 )
@@ -197,7 +189,7 @@ class GPTSourceReviewService:
                 self.sleep(backoff_seconds)
         if last_error is not None:
             raise last_error
-        raise RuntimeError("GPT source review request failed before receiving a response.")
+        raise RuntimeError("Gemini source review request failed before receiving a response.")
 
     def _build_repo_context(self, repo_path: Path) -> str:
         package_json_path = repo_path / "package.json"
@@ -293,16 +285,21 @@ class GPTSourceReviewService:
         )
 
     def _parse_response_json(self, payload: dict) -> dict:
-        output_text = payload.get("output_text")
-        if isinstance(output_text, str) and output_text.strip():
-            return json.loads(output_text)
+        candidates = payload.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            raise RuntimeError("Gemini response did not include any candidates.")
 
         fragments: list[str] = []
-        for item in payload.get("output", []):
-            for content in item.get("content", []):
-                text = content.get("text") or content.get("value")
+        for candidate in candidates:
+            content = candidate.get("content", {})
+            for part in content.get("parts", []):
+                text = part.get("text")
                 if isinstance(text, str) and text.strip():
                     fragments.append(text)
+
         if not fragments:
-            raise RuntimeError("OpenAI response did not include JSON output text.")
+            raise RuntimeError("Gemini response did not include JSON output text.")
         return json.loads("\n".join(fragments))
+
+
+GPTSourceReviewService = GeminiSourceReviewService

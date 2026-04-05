@@ -122,8 +122,10 @@ The backend and hosted orchestrator should share the same `FETCH_EVALUATION_API_
 Start the relay locally:
 
 ```powershell
-py -m uvicorn uxray_fetch.relay:app --host 127.0.0.1 --port 8100 --app-dir apps/fetch
+py apps/fetch/run_relay.py
 ```
+
+Before moving on, confirm the configured `FETCH_RELAY_AGENT_ADDRESS` is active in Agentverse. If Agentverse shows that mailbox relay agent as inactive, the hosted orchestrator has no return path and UXRay will fall back away from the mailbox route.
 
 ## 8. First direct hosted test
 

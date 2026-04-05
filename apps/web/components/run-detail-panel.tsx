@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
-  Camera,
   CheckCircle2,
   Clock3,
   Flag,
@@ -25,7 +24,12 @@ type RunDetailPanelProps = {
   run: RunDetail;
 };
 
-type OverlaySection = "logs" | "personas" | "fetch" | "artifacts" | "live" | "source";
+type OverlaySection = "logs" | "personas" | "fetch" | "source";
+type LiveSessionCard = {
+  id: string;
+  label: string;
+  liveUrl: string;
+};
 
 function normalizedIssueTerms(value: string) {
   return new Set(
@@ -150,6 +154,10 @@ function resultModeLabel(resultMode: PersonaSessionRecord["result_mode"]) {
 
 function evaluationSummary(run: RunDetail) {
   if (run.evaluation_status === "completed") {
+    const usedAsiFallback = run.evaluations.some((evaluation) => evaluation.source === "fetch_ai_asi_fallback");
+    if (usedAsiFallback) {
+      return "Hosted Fetch.ai review completed through the ASI fallback path.";
+    }
     return run.evaluations.length
       ? "Hosted Fetch.ai synthesis completed."
       : "Hosted Fetch.ai synthesis completed without saved audience evaluations.";
@@ -170,16 +178,72 @@ function sourceReviewSummary(run: RunDetail) {
   if (run.source_review_status === "failed") {
     return run.source_review_error ?? "GPT source review failed.";
   }
+  if ((run.source_review_status === "running" || run.source_review_status === "pending") && run.source_review_error) {
+    return run.source_review_error;
+  }
   if (run.source_review_status === "running" || run.source_review_status === "pending") {
     return "GPT source review is still processing the linked repo.";
   }
   return "Source review is unavailable for this run.";
 }
 
+function liveSessionCards(run: RunDetail) {
+  const cards: LiveSessionCard[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const persona of run.persona_sessions) {
+    if (!persona.live_url) {
+      continue;
+    }
+    if (seenUrls.has(persona.live_url)) {
+      continue;
+    }
+    seenUrls.add(persona.live_url);
+    cards.push({
+      id: persona.id,
+      label: persona.display_label,
+      liveUrl: persona.live_url,
+    });
+  }
+
+  if (cards.length === 0 && run.live_url && !isDemoRecordId(run.id)) {
+    cards.push({
+      id: `${run.id}-aggregate-live`,
+      label: "Aggregate session",
+      liveUrl: run.live_url,
+    });
+  }
+
+  return cards;
+}
+
 function compactProgress<T extends { created_at: string }>(items: T[], limit = 6) {
   return [...items]
     .sort((left, right) => right.created_at.localeCompare(left.created_at))
     .slice(0, limit);
+}
+
+function issueImageFocus(issue: RunDetail["issues"][number]) {
+  const haystack = `${issue.title} ${issue.summary} ${issue.evidence.join(" ")}`.toLowerCase();
+  if (haystack.includes("faq") || haystack.includes("accordion")) {
+    return "origin-top scale-[1.42] object-[50%_20%]";
+  }
+  if (haystack.includes("hero") || haystack.includes("headline") || haystack.includes("messaging")) {
+    return "origin-top scale-[1.25] object-[50%_15%]";
+  }
+  if (haystack.includes("pricing") || haystack.includes("plan")) {
+    return "origin-center scale-[1.32] object-[50%_45%]";
+  }
+  if (haystack.includes("footer")) {
+    return "origin-bottom scale-[1.38] object-[50%_88%]";
+  }
+  if (haystack.includes("nav") || haystack.includes("header") || haystack.includes("menu")) {
+    return "origin-top scale-[1.3] object-[50%_10%]";
+  }
+  if (haystack.includes("cta") || haystack.includes("button") || haystack.includes("signup")) {
+    return "origin-center scale-[1.34] object-[50%_42%]";
+  }
+  return "origin-center scale-[1.18] object-center";
 }
 
 function DetailOverlay({
@@ -217,11 +281,7 @@ function DetailOverlay({
                   ? "Persona sessions"
                   : section === "fetch"
                     ? "Fetch.ai review"
-                    : section === "live"
-                      ? "Live session"
-                      : section === "source"
-                        ? "Source review"
-                    : "Artifacts"}
+                      : "Source review"}
             </h2>
           </div>
           <button
@@ -339,70 +399,6 @@ function DetailOverlay({
             </div>
           ) : null}
 
-          {section === "live" ? (
-            <div className="space-y-4">
-              {run.live_url ? (
-                <>
-                  <div className="overflow-hidden border hairline-border border-white/10 bg-black/20">
-                    <iframe
-                      src={run.live_url}
-                      title="Browser Use live session"
-                      className="h-[70vh] w-full bg-black"
-                    />
-                  </div>
-                  <a
-                    href={run.live_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white transition hover:bg-white/5"
-                  >
-                    Open in new tab
-                    <ArrowUpRight className="size-4" />
-                  </a>
-                </>
-              ) : (
-                <p className="text-sm text-zinc-500">No live Browser Use session is available for this run.</p>
-              )}
-            </div>
-          ) : null}
-
-          {section === "artifacts" ? (
-            <div className="space-y-4">
-              {run.artifacts.length > 0 ? (
-                run.artifacts.map((artifact) => (
-                  <div key={artifact.id} className="border hairline-border border-white/10 bg-black/20 p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-medium text-white">{artifact.label}</p>
-                        <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">{artifact.kind}</p>
-                      </div>
-                      <a
-                        href={artifact.path_or_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 text-sm text-accent transition hover:text-white"
-                      >
-                        Open
-                        <ArrowUpRight className="size-4" />
-                      </a>
-                    </div>
-                    {artifact.kind === "screenshot" ? (
-                      <div className="mt-4">
-                        <SmartImage
-                          src={artifact.path_or_url}
-                          alt={artifact.label}
-                          className="h-56 w-full rounded-[1.25rem] object-cover"
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-zinc-500">No persisted artifacts were attached to this run.</p>
-              )}
-            </div>
-          ) : null}
-
           {section === "personas" ? (
             <div className="space-y-4">
               {run.persona_sessions.map((persona) => (
@@ -469,7 +465,7 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
   const [overlaySection, setOverlaySection] = useState<OverlaySection | null>(null);
   const [retryingFetch, setRetryingFetch] = useState(false);
   const [fetchRetryError, setFetchRetryError] = useState<string | null>(null);
-  const activeRunLiveUrl = run.live_url && !isDemoRecordId(run.id) ? run.live_url : null;
+  const liveSessions = useMemo(() => liveSessionCards(run), [run]);
   const topIssues = useMemo(() => {
     const severityRank = { high: 3, medium: 2, low: 1 } as const;
     return [...run.issues]
@@ -494,6 +490,7 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
     () => run.recommendations.filter((recommendation) => recommendation.source === "source_review_gpt"),
     [run.recommendations],
   );
+  const topFetchEvaluations = useMemo(() => run.evaluations.slice(0, 3), [run.evaluations]);
   const topRecommendations = useMemo(
     () => [...analyzerRecommendations, ...sourceRecommendations].slice(0, 4),
     [analyzerRecommendations, sourceRecommendations],
@@ -540,20 +537,11 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                   Focused evidence, not an endless scroll.
                 </h1>
                 <p className="max-w-3xl text-sm leading-7 text-zinc-500">
-                  Review the strongest issues first. Open logs, persona detail, artifacts, or Fetch review only when needed.
+                  Review the strongest issues first. Keep the live sessions visible and open logs or persona detail only when you need more context.
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => setOverlaySection("live")}
-                  disabled={!run.live_url}
-                  className="inline-flex items-center gap-2 border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <ArrowUpRight className="size-4" />
-                  Live session
-                </button>
                 <button
                   type="button"
                   onClick={() => setOverlaySection("logs")}
@@ -569,14 +557,6 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                 >
                   <Bot className="size-4" />
                   Persona detail
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOverlaySection("artifacts")}
-                  className="inline-flex items-center gap-2 border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white transition hover:bg-white/5"
-                >
-                  <Camera className="size-4" />
-                  Artifacts
                 </button>
                 <button
                   type="button"
@@ -597,41 +577,42 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                 </button>
               </div>
 
-              {activeRunLiveUrl ? (
-                <div className="overflow-hidden border hairline-border border-white/10 bg-black/20">
-                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] text-zinc-600">Live Browser Use session</p>
-                      <p className="mt-1 text-sm text-zinc-500">The session stays compact here. Open the overlay for a larger view.</p>
+              {liveSessions.length > 0 ? (
+                <div className="grid gap-4 lg:grid-cols-3">
+                  {liveSessions.map((session) => (
+                    <div key={session.id} className="overflow-hidden border hairline-border border-white/10 bg-black/20">
+                      <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.18em] text-zinc-600">Live Browser Use session</p>
+                          <p className="mt-1 text-sm text-zinc-500">{session.label}</p>
+                        </div>
+                        <a
+                          href={session.liveUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 border border-white/10 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white transition hover:bg-white/5"
+                        >
+                          Open live
+                          <ArrowUpRight className="size-4" />
+                        </a>
+                      </div>
+                      <iframe
+                        src={session.liveUrl}
+                        title={`Browser Use live session - ${session.label}`}
+                        className="h-72 w-full bg-black"
+                      />
                     </div>
-                    <a
-                      href={activeRunLiveUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 border border-white/10 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white transition hover:bg-white/5"
-                    >
-                      Open live
-                      <ArrowUpRight className="size-4" />
-                    </a>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="border hairline-border border-white/10 bg-black/20 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.22em] text-zinc-600">Fetch review</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">{evaluationSummary(run)}</p>
                   </div>
-                  <iframe
-                    src={activeRunLiveUrl}
-                    title="Browser Use live session"
-                    className="h-72 w-full bg-black"
-                  />
-                </div>
-              ) : null}
-
-              {run.repo_build_error ? (
-                <div className="border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                  {run.repo_build_error}
-                </div>
-              ) : null}
-
-              {run.evaluation_status === "failed" ? (
-                <div className="border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                  <p>{evaluationSummary(run)}</p>
-                  <div className="mt-3 flex flex-wrap gap-3">
+                  {run.evaluation_status === "failed" ? (
                     <button
                       type="button"
                       onClick={() => void handleRetryFetch()}
@@ -640,15 +621,42 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                     >
                       {retryingFetch ? "Retrying..." : "Retry Fetch review"}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setOverlaySection("fetch")}
-                      className="inline-flex items-center gap-2 border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white transition hover:bg-white/5"
-                    >
-                      View details
-                    </button>
+                  ) : null}
+                </div>
+                {fetchRetryError ? <p className="mt-3 text-sm text-red-100">{fetchRetryError}</p> : null}
+                {topFetchEvaluations.length > 0 ? (
+                  <div className="mt-5 grid gap-3">
+                    {topFetchEvaluations.map((evaluation) => (
+                      <div key={evaluation.id} className="border hairline-border border-white/10 bg-white/[0.02] p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-white">{evaluation.issue_title}</p>
+                          <span className="border border-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-slate-300">
+                            {evaluation.audience}
+                          </span>
+                          <span className="border border-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-slate-300">
+                            {evaluation.priority}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-sm leading-6 text-slate-300">{evaluation.impact_summary}</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{evaluation.rationale}</p>
+                      </div>
+                    ))}
+                    {run.evaluations.length > topFetchEvaluations.length ? (
+                      <button
+                        type="button"
+                        onClick={() => setOverlaySection("fetch")}
+                        className="inline-flex items-center gap-2 self-start border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.18em] text-white transition hover:bg-white/5"
+                      >
+                        View full Fetch review
+                      </button>
+                    ) : null}
                   </div>
-                  {fetchRetryError ? <p className="mt-3 text-sm text-red-100">{fetchRetryError}</p> : null}
+                ) : null}
+              </div>
+
+              {run.repo_build_error ? (
+                <div className="border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  {run.repo_build_error}
                 </div>
               ) : null}
 
@@ -691,7 +699,15 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                 </div>
                 <p className="mt-4 text-sm text-slate-300">{formatDate(run.completed_at ?? run.started_at ?? run.created_at)}</p>
                 {run.target_url ? (
-                  <p className="mt-2 truncate text-xs text-zinc-500">{run.target_url}</p>
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-600">
+                      {run.target_source === "repo_preview" ? "Audited preview" : "Audited target"}
+                    </p>
+                    <p className="truncate text-xs text-zinc-500">{run.target_url}</p>
+                    {run.target_source === "repo_preview" && run.local_preview_url ? (
+                      <p className="truncate text-xs text-zinc-600">Local preview: {run.local_preview_url}</p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -728,12 +744,12 @@ export function RunDetailPanel({ run }: RunDetailPanelProps) {
                         </ul>
                       ) : null}
                       {imageCandidates.length > 0 ? (
-                        <div className="mt-4">
+                        <div className="mt-4 overflow-hidden rounded-[1.25rem] bg-black/30">
                           <SmartImage
                             src={imageCandidates[0]}
                             fallbackSrcs={imageCandidates.slice(1)}
                             alt={`${issue.title} evidence screenshot`}
-                            className="h-60 w-full rounded-[1.25rem] object-cover"
+                            className={`h-60 w-full object-cover transition-transform duration-300 ${issueImageFocus(issue)}`}
                           />
                         </div>
                       ) : null}

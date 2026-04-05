@@ -28,6 +28,8 @@ export type RunSummary = {
   status: RunStatus;
   live_url: string | null;
   target_url: string | null;
+  local_preview_url: string | null;
+  public_preview_url: string | null;
   target_source: TargetSource;
   browser_use_model: string;
   evaluation_status: EvaluationStatus;

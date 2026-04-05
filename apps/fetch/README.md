@@ -73,6 +73,8 @@ Set-Location apps/fetch
 py -m uxray_fetch.relay_agent
 ```
 
+Keep that mailbox relay agent process running while you want the hosted orchestrator path to work. The local HTTP relay alone is not enough; the hosted orchestrator needs the mailbox-connected relay agent to stay active in Agentverse so it has somewhere to reply.
+
 ## ASI:One role
 
 ASI:One is the public demo and explanation surface for the orchestrator.

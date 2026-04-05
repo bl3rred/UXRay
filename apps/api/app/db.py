@@ -44,6 +44,8 @@ CREATE_STATEMENTS = [
         status TEXT NOT NULL,
         live_url TEXT,
         target_url TEXT,
+        local_preview_url TEXT,
+        public_preview_url TEXT,
         target_source TEXT NOT NULL DEFAULT 'site',
         browser_use_model TEXT NOT NULL DEFAULT 'claude-sonnet-4.6',
         evaluation_status TEXT NOT NULL DEFAULT 'pending',
@@ -259,6 +261,18 @@ class SQLiteStore:
                 connection,
                 table_name="runs",
                 column_name="target_url",
+                column_sql="TEXT",
+            )
+            self._ensure_column(
+                connection,
+                table_name="runs",
+                column_name="local_preview_url",
+                column_sql="TEXT",
+            )
+            self._ensure_column(
+                connection,
+                table_name="runs",
+                column_name="public_preview_url",
                 column_sql="TEXT",
             )
             self._ensure_column(
@@ -480,6 +494,8 @@ class SQLiteStore:
             project_id=project_id,
             status="queued",
             target_url=None,
+            local_preview_url=None,
+            public_preview_url=None,
             target_source="site",
             browser_use_model=browser_use_model,
             evaluation_status="pending",
@@ -504,7 +520,7 @@ class SQLiteStore:
             rows = connection.execute(
                 """
                 SELECT id, project_id, status, live_url,
-                       target_url,
+                       target_url, local_preview_url, public_preview_url,
                        COALESCE(target_source, 'site') AS target_source,
                        COALESCE(browser_use_model, 'claude-sonnet-4.6') AS browser_use_model,
                        COALESCE(evaluation_status, 'pending') AS evaluation_status,
@@ -543,7 +559,7 @@ class SQLiteStore:
                 connection.execute(
                     """
                     SELECT id, project_id, status, live_url,
-                           target_url,
+                           target_url, local_preview_url, public_preview_url,
                            COALESCE(target_source, 'site') AS target_source,
                            COALESCE(browser_use_model, 'claude-sonnet-4.6') AS browser_use_model,
                            COALESCE(evaluation_status, 'pending') AS evaluation_status,
@@ -797,6 +813,8 @@ class SQLiteStore:
                     """
                     SELECT runs.id AS run_id,
                            runs.target_url,
+                           runs.local_preview_url,
+                           runs.public_preview_url,
                            runs.target_source,
                            runs.evaluation_status,
                            runs.source_review_status,
@@ -1015,6 +1033,8 @@ class SQLiteStore:
         live_url: str | None,
         final_url: str | None,
         target_url: str | None,
+        local_preview_url: str | None,
+        public_preview_url: str | None,
         target_source: str,
         summary: str,
         analysis: AnalysisResult,
@@ -1031,6 +1051,8 @@ class SQLiteStore:
                 SET status = 'completed',
                     live_url = COALESCE(?, live_url),
                     target_url = COALESCE(?, target_url),
+                    local_preview_url = COALESCE(?, local_preview_url),
+                    public_preview_url = COALESCE(?, public_preview_url),
                     target_source = ?,
                     final_url = ?,
                     summary = ?,
@@ -1044,6 +1066,8 @@ class SQLiteStore:
                 (
                     live_url,
                     target_url,
+                    local_preview_url,
+                    public_preview_url,
                     target_source,
                     final_url,
                     summary,
@@ -1185,6 +1209,8 @@ class SQLiteStore:
         repo_build_status: str,
         repo_build_error: str | None,
         target_url: str | None = None,
+        local_preview_url: str | None = None,
+        public_preview_url: str | None = None,
         target_source: str | None = None,
     ) -> None:
         with self.connection() as connection:
@@ -1194,10 +1220,20 @@ class SQLiteStore:
                 SET repo_build_status = ?,
                     repo_build_error = ?,
                     target_url = COALESCE(?, target_url),
+                    local_preview_url = COALESCE(?, local_preview_url),
+                    public_preview_url = COALESCE(?, public_preview_url),
                     target_source = COALESCE(?, target_source)
                 WHERE id = ?
                 """,
-                (repo_build_status, repo_build_error, target_url, target_source, run_id),
+                (
+                    repo_build_status,
+                    repo_build_error,
+                    target_url,
+                    local_preview_url,
+                    public_preview_url,
+                    target_source,
+                    run_id,
+                ),
             )
             connection.commit()
 
@@ -1206,7 +1242,22 @@ class SQLiteStore:
             connection.execute(
                 """
                 UPDATE runs
-                SET status = 'failed', evaluation_status = 'failed', error_message = ?, completed_at = ?
+                SET status = 'failed',
+                    evaluation_status = CASE
+                        WHEN evaluation_status IN ('pending', 'running') THEN 'failed'
+                        ELSE evaluation_status
+                    END,
+                    source_review_status = CASE
+                        WHEN source_review_status IN ('pending', 'running') THEN 'skipped'
+                        ELSE source_review_status
+                    END,
+                    source_review_error = CASE
+                        WHEN source_review_status IN ('pending', 'running')
+                            THEN 'Run failed before source review could start.'
+                        ELSE source_review_error
+                    END,
+                    error_message = ?,
+                    completed_at = ?
                 WHERE id = ?
                 """,
                 (error_message, utc_now_iso(), run_id),

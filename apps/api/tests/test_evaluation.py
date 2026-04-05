@@ -247,3 +247,116 @@ def test_fetch_evaluation_service_exposes_relay_failure_reason() -> None:
 
     assert result.status == "failed"
     assert result.error == "Timed out waiting for hosted orchestrator response."
+
+
+def test_fetch_evaluation_service_fails_fast_when_mailbox_relay_is_inactive() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/almanac/agents/agent1relay":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "inactive",
+                    "type": "mailbox",
+                    "address": "agent1relay",
+                    "protocols": [],
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    service = FetchEvaluationService(
+        enabled=True,
+        agent_url="http://127.0.0.1:8100/evaluate",
+        api_key="fetch-key",
+        agentverse_api_key="agentverse-key",
+        relay_agent_address="agent1relay",
+        relay_orchestrator_address="agent1orchestrator",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = service.evaluate(
+        project_name="UXRay Demo",
+        project_url="https://example.com",
+        issues=[
+            AnalysisIssue(
+                issue_type="cta_feedback",
+                title="Primary signup CTA appears disabled",
+                summary="The button stayed disabled after click.",
+                severity="high",
+                route="/signup",
+                evidence=["No feedback shown"],
+                confidence=0.9,
+            )
+        ],
+    )
+
+    assert result.status == "failed"
+    assert result.error == "Configured mailbox relay agent is not active on Agentverse (current status: inactive)."
+
+
+def test_fetch_evaluation_service_uses_asi_fallback_when_mailbox_relay_is_inactive() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/almanac/agents/agent1relay":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "inactive",
+                    "type": "mailbox",
+                    "address": "agent1relay",
+                    "protocols": [],
+                },
+            )
+        if request.url.host == "api.asi1.ai":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "recommendations": [
+                                            {
+                                                "issue_title": "Primary signup CTA appears disabled",
+                                                "final_priority": "high",
+                                                "audience_impact_summary": "first time visitor=8/10; intent driven=9/10",
+                                                "merged_rationale": "Direct ASI fallback still sees this as a conversion blocker.",
+                                            }
+                                        ]
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    service = FetchEvaluationService(
+        enabled=True,
+        agent_url="http://127.0.0.1:8100/evaluate",
+        api_key="fetch-key",
+        agentverse_api_key="agentverse-key",
+        relay_agent_address="agent1relay",
+        relay_orchestrator_address="agent1orchestrator",
+        asi_api_key="asi-key",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = service.evaluate(
+        project_name="UXRay Demo",
+        project_url="https://example.com",
+        issues=[
+            AnalysisIssue(
+                issue_type="cta_feedback",
+                title="Primary signup CTA appears disabled",
+                summary="The button stayed disabled after click.",
+                severity="high",
+                route="/signup",
+                evidence=["No feedback shown"],
+                confidence=0.9,
+            )
+        ],
+    )
+
+    assert result.status == "completed"
+    assert result.evaluations[0].source == "fetch_ai_asi_fallback"

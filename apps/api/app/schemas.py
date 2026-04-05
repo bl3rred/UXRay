@@ -87,6 +87,8 @@ class RunSummary(BaseModel):
     status: RunStatus
     live_url: str | None = None
     target_url: str | None = None
+    local_preview_url: str | None = None
+    public_preview_url: str | None = None
     target_source: TargetSource = "site"
     browser_use_model: str
     evaluation_status: EvaluationStatus

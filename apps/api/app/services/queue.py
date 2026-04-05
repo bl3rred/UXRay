@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 from app.adapters.browser_use import describe_persona_mission
 from app.db import SQLiteStore
@@ -20,6 +21,7 @@ LOW_SIGNAL_PROGRESS_FRAGMENTS = (
     "screenshot capture expired or was unavailable",
     "browser use run is capped",
 )
+SOURCE_REVIEW_RATE_LIMIT_ERROR = "Gemini source review is currently rate limited (429)."
 
 
 class RunWorker:
@@ -29,15 +31,23 @@ class RunWorker:
         adapter,
         evaluator,
         repo_builder,
+        tunnel_manager,
         source_reviewer,
         poll_seconds: float = 0.5,
+        source_review_queue_retry_attempts: int = 1,
+        source_review_retry_delay_seconds: float = 30.0,
+        sleep_fn=time.sleep,
     ) -> None:
         self.store = store
         self.adapter = adapter
         self.evaluator = evaluator
         self.repo_builder = repo_builder
+        self.tunnel_manager = tunnel_manager
         self.source_reviewer = source_reviewer
         self.poll_seconds = poll_seconds
+        self.source_review_queue_retry_attempts = source_review_queue_retry_attempts
+        self.source_review_retry_delay_seconds = source_review_retry_delay_seconds
+        self.sleep_fn = sleep_fn
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run_loop, name="uxray-run-worker", daemon=True)
 
@@ -73,7 +83,9 @@ class RunWorker:
                     )
 
             try:
-                target_url, target_source, preview = self._resolve_run_target(claimed, progress_callback)
+                target_url, target_source, preview, local_preview_url, public_preview_url = self._resolve_run_target(
+                    claimed, progress_callback
+                )
                 persona_specs = list(CORE_PERSONAS)
                 custom_audience = claimed.get("custom_audience")
                 if custom_audience:
@@ -142,6 +154,8 @@ class RunWorker:
                     live_url=aggregate_result.live_url,
                     final_url=aggregate_result.final_url,
                     target_url=target_url,
+                    local_preview_url=local_preview_url,
+                    public_preview_url=public_preview_url,
                     target_source=target_source,
                     summary=aggregate_result.summary,
                     analysis=analysis,
@@ -171,7 +185,7 @@ class RunWorker:
         self,
         claimed: dict[str, str],
         progress_callback,
-    ) -> tuple[str, str, RepoPreviewResult | None]:
+    ) -> tuple[str, str, RepoPreviewResult | None, str | None, str | None]:
         repo_url = claimed.get("repo_url")
         site_url = claimed.get("url")
         if not repo_url:
@@ -183,9 +197,11 @@ class RunWorker:
                 repo_build_status="not_requested",
                 repo_build_error=None,
                 target_url=target_url,
+                local_preview_url=None,
+                public_preview_url=None,
                 target_source="site",
             )
-            return target_url, "site", None
+            return target_url, "site", None, None, None
 
         self.store.update_repo_build_state(
             claimed["run_id"],
@@ -234,27 +250,76 @@ class RunWorker:
                     repo_build_status="failed",
                     repo_build_error=str(exc),
                     target_url=fallback_url,
+                    local_preview_url=None,
+                    public_preview_url=None,
                     target_source="site",
                 )
-                return fallback_url, "site", None
+                return fallback_url, "site", None, None, None
             raise RuntimeError(f"Public repo preview failed and no website URL fallback exists. {exc}") from exc
 
-        self.store.update_repo_build_state(
-            claimed["run_id"],
-            repo_build_status="completed",
-            repo_build_error=None,
-            target_url=preview.preview_url,
-            target_source="repo_preview",
-        )
         progress_callback(
             {
-                "summary": f"Using local repo preview at {preview.preview_url}.",
+                "summary": "Exposing the local repo preview through a temporary public URL for Browser Use.",
                 "type": "system",
                 "screenshot_url": None,
                 "live_url": None,
             }
         )
-        return preview.preview_url, "repo_preview", preview
+        try:
+            public_preview_url = self.tunnel_manager.expose(preview.preview_url)
+        except Exception as exc:
+            fallback_url = site_url
+            self.store.update_repo_build_state(
+                claimed["run_id"],
+                repo_build_status="failed",
+                repo_build_error=str(exc),
+                local_preview_url=preview.preview_url,
+                public_preview_url=None,
+            )
+            if fallback_url:
+                progress_callback(
+                    {
+                        "summary": f"Repo preview tunnel failed. Falling back to the provided website URL. {exc}",
+                        "type": "system",
+                        "screenshot_url": None,
+                        "live_url": None,
+                    }
+                )
+                self.store.update_repo_build_state(
+                    claimed["run_id"],
+                    repo_build_status="failed",
+                    repo_build_error=str(exc),
+                    target_url=fallback_url,
+                    local_preview_url=preview.preview_url,
+                    public_preview_url=None,
+                    target_source="site",
+                )
+                return fallback_url, "site", None, None, None
+            raise RuntimeError(
+                f"Public repo preview tunnel failed and no website URL fallback exists. {exc}"
+            ) from exc
+
+        self.store.update_repo_build_state(
+            claimed["run_id"],
+            repo_build_status="completed",
+            repo_build_error=None,
+            target_url=public_preview_url,
+            local_preview_url=preview.preview_url,
+            public_preview_url=public_preview_url,
+            target_source="repo_preview",
+        )
+        progress_callback(
+            {
+                "summary": (
+                    f"Using tunneled repo preview at {public_preview_url} "
+                    f"(local preview {preview.preview_url})."
+                ),
+                "type": "system",
+                "screenshot_url": None,
+                "live_url": None,
+            }
+        )
+        return public_preview_url, "repo_preview", preview, preview.preview_url, public_preview_url
 
     def _spawn_fetch_enrichment(
         self,
@@ -286,9 +351,17 @@ class RunWorker:
             if evaluations.status == "completed":
                 self.store.save_evaluations(run_id, evaluations)
                 self.store.update_evaluation_status(run_id, "completed", None)
+                used_asi_fallback = any(
+                    evaluation.source == "fetch_ai_asi_fallback"
+                    for evaluation in evaluations.evaluations
+                )
                 self.store.add_progress_event(
                     run_id=run_id,
-                    summary="Fetch.ai review completed.",
+                    summary=(
+                        "Fetch.ai review completed through ASI fallback."
+                        if used_asi_fallback
+                        else "Fetch.ai review completed."
+                    ),
                     event_type="system",
                 )
                 return
@@ -331,34 +404,64 @@ class RunWorker:
         self.store.update_source_review_status(run_id, "running", None)
         self.store.add_progress_event(
             run_id=run_id,
-            summary="GPT source review started in the background.",
+            summary="Gemini source review started in the background.",
             event_type="system",
         )
 
         def runner() -> None:
-            result = self.source_reviewer.review(
-                project_name=project_name,
-                repo_path=preview.repo_path,
-                framework=preview.framework,
-                issues=analysis.issues,
-            )
-            if result.status == "completed":
-                self.store.add_recommendations(run_id, result.recommendations)
-                self.store.update_source_review_status(run_id, "completed", None)
-                self.store.add_progress_event(
-                    run_id=run_id,
-                    summary="GPT source review completed.",
-                    event_type="system",
+            queued_retries_remaining = self.source_review_queue_retry_attempts
+            while True:
+                result = self.source_reviewer.review(
+                    project_name=project_name,
+                    repo_path=preview.repo_path,
+                    framework=preview.framework,
+                    issues=analysis.issues,
                 )
-                return
+                if result.status == "completed":
+                    self.store.add_recommendations(run_id, result.recommendations)
+                    self.store.update_source_review_status(run_id, "completed", None)
+                    self.store.add_progress_event(
+                        run_id=run_id,
+                        summary="Gemini source review completed.",
+                        event_type="system",
+                    )
+                    return
 
-            self.store.update_source_review_status(run_id, result.status, result.error)
-            if result.error:
-                self.store.add_progress_event(
-                    run_id=run_id,
-                    summary=f"GPT source review failed: {result.error}",
-                    event_type="system",
-                )
+                is_rate_limited = (result.error or "") == SOURCE_REVIEW_RATE_LIMIT_ERROR
+                if is_rate_limited and queued_retries_remaining > 0:
+                    queued_retries_remaining -= 1
+                    wait_seconds = int(self.source_review_retry_delay_seconds)
+                    queued_message = (
+                        "Gemini source review hit a rate limit. "
+                        f"Queued one retry in {wait_seconds} seconds."
+                    )
+                    self.store.update_source_review_status(run_id, "pending", queued_message)
+                    self.store.add_progress_event(
+                        run_id=run_id,
+                        summary=queued_message,
+                        event_type="system",
+                    )
+                    self.sleep_fn(self.source_review_retry_delay_seconds)
+                    self.store.update_source_review_status(
+                        run_id,
+                        "running",
+                        "Retrying Gemini source review after rate limit.",
+                    )
+                    self.store.add_progress_event(
+                        run_id=run_id,
+                        summary="Retrying Gemini source review after rate limit.",
+                        event_type="system",
+                    )
+                    continue
+
+                self.store.update_source_review_status(run_id, result.status, result.error)
+                if result.error:
+                    self.store.add_progress_event(
+                        run_id=run_id,
+                        summary=f"Gemini source review failed: {result.error}",
+                        event_type="system",
+                    )
+                return
 
         threading.Thread(
             target=runner,

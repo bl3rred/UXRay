@@ -170,6 +170,21 @@ class FakeRepoBuilder:
         return None
 
 
+class FakeTunnelManager:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.fail_urls: set[str] = set()
+
+    def expose(self, local_url: str) -> str:
+        self.calls.append(local_url)
+        if local_url in self.fail_urls:
+            raise RuntimeError("Repo preview tunnel failed.")
+        return "https://preview.example.trycloudflare.com"
+
+    def close(self) -> None:
+        return None
+
+
 class FakeSourceReviewer:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -230,10 +245,16 @@ def fake_source_reviewer() -> FakeSourceReviewer:
 
 
 @pytest.fixture
+def fake_tunnel_manager() -> FakeTunnelManager:
+    return FakeTunnelManager()
+
+
+@pytest.fixture
 def client(
     fake_adapter: FakeBrowserUseAdapter,
     fake_auth_service: FakeSupabaseAuthService,
     fake_repo_builder: FakeRepoBuilder,
+    fake_tunnel_manager: FakeTunnelManager,
     fake_source_reviewer: FakeSourceReviewer,
 ) -> TestClient:
     test_root = Path("apps/api/data/test-runtime") / uuid.uuid4().hex
@@ -250,13 +271,15 @@ def client(
         supabase_publishable_key="sb_publishable_test",
         local_repo_build_root=test_root / "repo-builds",
         source_review_enabled=True,
-        source_review_api_key="test-openai-key",
+        source_review_api_key="test-gemini-key",
+        source_review_model="gemini-3.1-flash-lite-preview",
     )
     app = create_app(
         config=config,
         adapter=fake_adapter,
         auth_service=fake_auth_service,
         repo_builder=fake_repo_builder,
+        tunnel_manager=fake_tunnel_manager,
         source_reviewer=fake_source_reviewer,
     )
     with TestClient(app) as test_client:

@@ -9,10 +9,12 @@ const run: RunDetail = {
   project_id: "project_123",
   status: "completed",
   live_url: "https://browser-use.example/live",
-  target_url: "http://127.0.0.1:4100",
+  target_url: "https://preview.example.trycloudflare.com",
+  local_preview_url: "http://127.0.0.1:4100",
+  public_preview_url: "https://preview.example.trycloudflare.com",
   target_source: "repo_preview",
   browser_use_model: "claude-sonnet-4.6",
-  evaluation_status: "skipped",
+  evaluation_status: "completed",
   evaluation_error: null,
   source_review_status: "completed",
   source_review_error: null,
@@ -70,7 +72,17 @@ const run: RunDetail = {
       screenshot_url: "https://example.com/live.png",
     },
   ],
-  evaluations: [],
+  evaluations: [
+    {
+      id: "evaluation_1",
+      issue_title: "Primary CTA did not respond",
+      audience: "intent_driven",
+      priority: "high",
+      impact_summary: "The missing CTA feedback creates hesitation on the main conversion step.",
+      rationale: "Intent-driven users are likely to click twice or assume the action failed.",
+      source: "fetch_ai_hosted_mailbox",
+    },
+  ],
   persona_sessions: [
     {
       id: "persona_1",
@@ -109,6 +121,42 @@ const run: RunDetail = {
       ],
       artifacts: [],
     },
+    {
+      id: "persona_2",
+      persona_key: "intent_driven",
+      display_label: "Intent-driven",
+      mission: "Audit like a returning user trying to complete a task quickly.",
+      status: "completed",
+      result_mode: "structured",
+      live_url: "https://browser-use.example/intent-driven",
+      final_url: "https://example.com/pricing",
+      summary: "Intent-driven user saw pricing comparison friction.",
+      error_message: null,
+      created_at: "2026-04-03T10:00:00Z",
+      started_at: "2026-04-03T10:00:01Z",
+      completed_at: "2026-04-03T10:00:45Z",
+      observations: [],
+      progress: [],
+      artifacts: [],
+    },
+    {
+      id: "persona_3",
+      persona_key: "trust_evaluator",
+      display_label: "Trust evaluator",
+      mission: "Audit like a skeptical buyer scanning for proof, clarity, and reassurance.",
+      status: "completed",
+      result_mode: "structured",
+      live_url: "https://browser-use.example/trust-evaluator",
+      final_url: "https://example.com/faq",
+      summary: "Trust evaluator wanted more reassurance.",
+      error_message: null,
+      created_at: "2026-04-03T10:00:00Z",
+      started_at: "2026-04-03T10:00:01Z",
+      completed_at: "2026-04-03T10:00:50Z",
+      observations: [],
+      progress: [],
+      artifacts: [],
+    },
   ],
 };
 
@@ -116,19 +164,31 @@ describe("RunDetailPanel", () => {
   it("renders findings and recommendations for a completed run", () => {
     render(<RunDetailPanel run={run} />);
 
-    expect(screen.getByText(/primary cta did not respond/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/primary cta did not respond/i).length).toBeGreaterThan(1);
     expect(screen.getByText(/add explicit cta feedback/i)).toBeInTheDocument();
     expect(screen.getByText(/focused evidence, not an endless scroll/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /view logs/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /persona detail/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /live session/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /live sessions/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /artifacts/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/primary cta did not respond/i).length).toBeGreaterThan(1);
+    expect(screen.getByText(/intent_driven/i)).toBeInTheDocument();
+    expect(screen.getByText(/missing cta feedback creates hesitation/i)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /primary cta did not respond evidence screenshot/i })).toHaveAttribute(
       "src",
       "https://example.com/finding.png",
     );
-    expect(screen.getByTitle(/browser use live session/i)).toHaveAttribute(
+    expect(screen.getByTitle(/browser use live session - first-time visitor/i)).toHaveAttribute(
       "src",
-      "https://browser-use.example/live",
+      "https://browser-use.example/first-time",
+    );
+    expect(screen.getByTitle(/browser use live session - intent-driven/i)).toHaveAttribute(
+      "src",
+      "https://browser-use.example/intent-driven",
+    );
+    expect(screen.getByTitle(/browser use live session - trust evaluator/i)).toHaveAttribute(
+      "src",
+      "https://browser-use.example/trust-evaluator",
     );
   });
 
@@ -154,7 +214,8 @@ describe("RunDetailPanel", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /fetch\.ai review/i })).toBeInTheDocument();
     });
-    expect(screen.getByText(/fetch\.ai evaluation is not configured yet/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/hosted fetch\.ai synthesis completed/i).length).toBeGreaterThan(1);
+    expect(screen.getAllByText(/primary cta did not respond/i).length).toBeGreaterThan(1);
   });
 
   it("opens the source review overlay on demand", async () => {

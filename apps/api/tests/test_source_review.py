@@ -7,16 +7,16 @@ import uuid
 import httpx
 
 from app.schemas import IssueRecord
-from app.services.source_review import GPTSourceReviewService
+from app.services.source_review import GeminiSourceReviewService
 
 
 def test_source_review_skips_when_not_configured() -> None:
     tmp_path = Path("apps/api/data/test-runtime") / uuid.uuid4().hex
     tmp_path.mkdir(parents=True, exist_ok=True)
-    service = GPTSourceReviewService(
+    service = GeminiSourceReviewService(
         enabled=False,
         api_key=None,
-        model="gpt-5-mini",
+        model="gemini-3.1-flash-lite-preview",
     )
 
     result = service.review(
@@ -30,7 +30,7 @@ def test_source_review_skips_when_not_configured() -> None:
     assert result.recommendations == []
 
 
-def test_source_review_maps_openai_response() -> None:
+def test_source_review_maps_gemini_response() -> None:
     tmp_path = Path("apps/api/data/test-runtime") / uuid.uuid4().hex
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "package.json").write_text(
@@ -45,26 +45,39 @@ def test_source_review_maps_openai_response() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["model"] == "gpt-5-mini"
+        assert request.headers["x-goog-api-key"] == "test-gemini-key"
+        assert "gemini-3.1-flash-lite-preview:generateContent" in str(request.url)
+        assert payload["generationConfig"]["responseMimeType"] == "application/json"
+        assert payload["generationConfig"]["responseSchema"]["type"] == "OBJECT"
         body = {
-            "output_text": json.dumps(
+            "candidates": [
                 {
-                    "recommendations": [
-                        {
-                            "title": "Add visible CTA pending state",
-                            "summary": "The main conversion path still lacks obvious request feedback.",
-                            "likely_fix": "Update src/app.tsx so the CTA shows pending and success states.",
-                        }
-                    ]
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "recommendations": [
+                                            {
+                                                "title": "Add visible CTA pending state",
+                                                "summary": "The main conversion path still lacks obvious request feedback.",
+                                                "likely_fix": "Update src/app.tsx so the CTA shows pending and success states.",
+                                            }
+                                        ]
+                                    }
+                                )
+                            }
+                        ]
+                    }
                 }
-            )
+            ]
         }
         return httpx.Response(200, json=body)
 
-    service = GPTSourceReviewService(
+    service = GeminiSourceReviewService(
         enabled=True,
-        api_key="test-openai-key",
-        model="gpt-5-mini",
+        api_key="test-gemini-key",
+        model="gemini-3.1-flash-lite-preview",
         transport=httpx.MockTransport(handler),
     )
 
@@ -109,10 +122,10 @@ def test_source_review_reports_rate_limit_clearly() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": {"message": "rate limited"}})
 
-    service = GPTSourceReviewService(
+    service = GeminiSourceReviewService(
         enabled=True,
-        api_key="test-openai-key",
-        model="gpt-5-mini",
+        api_key="test-gemini-key",
+        model="gemini-3.1-flash-lite-preview",
         transport=httpx.MockTransport(handler),
     )
 
@@ -137,7 +150,7 @@ def test_source_review_reports_rate_limit_clearly() -> None:
     )
 
     assert result.status == "failed"
-    assert result.error == "GPT source review is currently rate limited by OpenAI (429)."
+    assert result.error == "Gemini source review is currently rate limited (429)."
 
 
 def test_source_review_retries_rate_limit_before_succeeding() -> None:
@@ -163,24 +176,34 @@ def test_source_review_retries_rate_limit_before_succeeding() -> None:
         return httpx.Response(
             200,
             json={
-                "output_text": json.dumps(
+                "candidates": [
                     {
-                        "recommendations": [
-                            {
-                                "title": "Clarify CTA feedback",
-                                "summary": "The main action still needs visible pending and success states.",
-                                "likely_fix": "Update src/app.tsx so the CTA shows loading and success feedback.",
-                            }
-                        ]
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": json.dumps(
+                                        {
+                                            "recommendations": [
+                                                {
+                                                    "title": "Clarify CTA feedback",
+                                                    "summary": "The main action still needs visible pending and success states.",
+                                                    "likely_fix": "Update src/app.tsx so the CTA shows loading and success feedback.",
+                                                }
+                                            ]
+                                        }
+                                    )
+                                }
+                            ]
+                        }
                     }
-                )
+                ]
             },
         )
 
-    service = GPTSourceReviewService(
+    service = GeminiSourceReviewService(
         enabled=True,
-        api_key="test-openai-key",
-        model="gpt-5-mini",
+        api_key="test-gemini-key",
+        model="gemini-3.1-flash-lite-preview",
         retry_attempts=2,
         retry_backoff_seconds=0.01,
         sleep=sleeps.append,
@@ -220,10 +243,10 @@ def test_source_review_repo_context_stays_tightly_scoped() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(("x" * 2600), encoding="utf-8")
 
-    service = GPTSourceReviewService(
+    service = GeminiSourceReviewService(
         enabled=True,
-        api_key="test-openai-key",
-        model="gpt-5-mini",
+        api_key="test-gemini-key",
+        model="gemini-3.1-flash-lite-preview",
     )
 
     context = service._build_repo_context(tmp_path)

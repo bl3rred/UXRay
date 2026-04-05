@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import urlparse
 
 import httpx
 
 from app.schemas import AnalysisIssue, EvaluationResult
+
+BACKEND_PROTOCOL_NAME = "uxray_hosted_backend_evaluation"
 
 
 class FetchEvaluationService:
@@ -15,6 +18,10 @@ class FetchEvaluationService:
         agent_url: str | None,
         api_key: str | None,
         timeout_seconds: float = 45.0,
+        agentverse_api_key: str | None = None,
+        relay_agent_address: str | None = None,
+        relay_orchestrator_address: str | None = None,
+        agentverse_base_url: str = "https://agentverse.ai",
         asi_api_key: str | None = None,
         asi_model: str = "asi1-mini",
         transport: httpx.BaseTransport | None = None,
@@ -23,6 +30,10 @@ class FetchEvaluationService:
         self.agent_url = agent_url
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
+        self.agentverse_api_key = agentverse_api_key or ""
+        self.relay_agent_address = relay_agent_address or ""
+        self.relay_orchestrator_address = relay_orchestrator_address or ""
+        self.agentverse_base_url = agentverse_base_url.rstrip("/")
         self.asi_api_key = asi_api_key or ""
         self.asi_model = asi_model
         self.transport = transport
@@ -57,7 +68,15 @@ class FetchEvaluationService:
             ],
         }
 
-        relay_result = self._evaluate_via_relay(request_payload)
+        relay_preflight_error = self._preflight_relay()
+        if relay_preflight_error:
+            relay_result = EvaluationResult(
+                status="failed",
+                evaluations=[],
+                error=relay_preflight_error,
+            )
+        else:
+            relay_result = self._evaluate_via_relay(request_payload)
         if relay_result.status == "completed":
             return relay_result
 
@@ -72,6 +91,57 @@ class FetchEvaluationService:
             return fallback_result
 
         return relay_result
+
+    def _preflight_relay(self) -> str | None:
+        if (
+            not self.agentverse_api_key
+            or not self.relay_agent_address
+            or not self.relay_orchestrator_address
+        ):
+            return None
+
+        try:
+            relay_agent = self._get_agentverse_json(
+                f"/v1/almanac/agents/{self.relay_agent_address}"
+            )
+        except Exception as exc:
+            return f"Could not verify mailbox relay agent availability on Agentverse. {exc}"
+
+        relay_status = str(relay_agent.get("status") or "").lower()
+        if relay_status not in {"active", "online"}:
+            normalized_status = relay_status or "inactive"
+            return (
+                "Configured mailbox relay agent is not active on Agentverse "
+                f"(current status: {normalized_status})."
+            )
+
+        try:
+            orchestrator = self._get_agentverse_json(
+                f"/v1/almanac/agents/{self.relay_orchestrator_address}"
+            )
+        except Exception as exc:
+            return f"Could not verify hosted orchestrator availability on Agentverse. {exc}"
+
+        for digest in orchestrator.get("protocols") or []:
+            manifest = self._get_optional_agentverse_json(
+                f"/v1/almanac/manifests/protocols/{digest}"
+            )
+            if not manifest:
+                continue
+            metadata = manifest.get("metadata") or []
+            metadata_items = [metadata] if isinstance(metadata, dict) else metadata
+            names = {
+                item.get("name")
+                for item in metadata_items
+                if isinstance(item, dict)
+            }
+            if BACKEND_PROTOCOL_NAME in names:
+                return None
+
+        return (
+            f"Hosted orchestrator is missing the published backend protocol "
+            f"'{BACKEND_PROTOCOL_NAME}'."
+        )
 
     def _evaluate_via_relay(self, request_payload: dict) -> EvaluationResult:
         try:
@@ -187,3 +257,32 @@ class FetchEvaluationService:
             if start != -1 and end != -1 and end >= start:
                 stripped = stripped[start : end + 1]
         return json.loads(stripped)
+
+    def _agentverse_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.agentverse_api_key}"}
+
+    def _get_agentverse_json(self, path: str) -> dict:
+        with httpx.Client(
+            transport=self.transport,
+            timeout=min(self.timeout_seconds, 10.0),
+        ) as client:
+            response = client.get(
+                f"{self.agentverse_base_url}{path}",
+                headers=self._agentverse_headers(),
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def _get_optional_agentverse_json(self, path: str) -> dict | None:
+        with httpx.Client(
+            transport=self.transport,
+            timeout=min(self.timeout_seconds, 10.0),
+        ) as client:
+            response = client.get(
+                f"{self.agentverse_base_url}{path}",
+                headers=self._agentverse_headers(),
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()

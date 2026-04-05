@@ -17,7 +17,9 @@ def test_health_endpoint(client) -> None:
     assert response.json()["data"]["source_review_enabled"] is True
 
 
-def test_create_project_and_run_lifecycle(client, fake_adapter, fake_repo_builder, fake_source_reviewer) -> None:
+def test_create_project_and_run_lifecycle(
+    client, fake_adapter, fake_repo_builder, fake_tunnel_manager, fake_source_reviewer
+) -> None:
     project_response = client.post(
         "/projects",
         json={
@@ -52,7 +54,9 @@ def test_create_project_and_run_lifecycle(client, fake_adapter, fake_repo_builde
     assert latest_payload is not None
     assert latest_payload["status"] == "completed"
     assert latest_payload["live_url"] == "https://browser-use.example/live-session/first_time_visitor"
-    assert latest_payload["target_url"] == "http://127.0.0.1:4100"
+    assert latest_payload["target_url"] == "https://preview.example.trycloudflare.com"
+    assert latest_payload["local_preview_url"] == "http://127.0.0.1:4100"
+    assert latest_payload["public_preview_url"] == "https://preview.example.trycloudflare.com"
     assert latest_payload["target_source"] == "repo_preview"
     assert latest_payload["browser_use_model"] == "claude-sonnet-4.6"
     assert latest_payload["evaluation_status"] == "skipped"
@@ -79,16 +83,19 @@ def test_create_project_and_run_lifecycle(client, fake_adapter, fake_repo_builde
         event["summary"] == "Starting multi-persona Browser Use audit with 4 persona sessions."
         for event in latest_payload["progress"]
     )
-    assert fake_adapter.calls[0]["project_url"] == "http://127.0.0.1:4100"
+    assert fake_adapter.calls[0]["project_url"] == "https://preview.example.trycloudflare.com"
     assert fake_adapter.calls[0]["model"] == "claude-sonnet-4.6"
     assert fake_adapter.calls[-1]["custom_audience"] == "B2B buyer comparing vendor trust and ROI"
     assert fake_repo_builder.calls[0]["repo_url"] == "https://github.com/example/repo"
+    assert fake_tunnel_manager.calls == ["http://127.0.0.1:4100"]
     assert fake_source_reviewer.calls[0]["framework"] == "vite"
 
     runs_response = client.get(f"/projects/{project_id}/runs", headers=GUEST_HEADERS)
     assert runs_response.status_code == 200
     assert runs_response.json()["data"][0]["id"] == run_id
-    assert runs_response.json()["data"][0]["target_url"] == "http://127.0.0.1:4100"
+    assert runs_response.json()["data"][0]["target_url"] == "https://preview.example.trycloudflare.com"
+    assert runs_response.json()["data"][0]["local_preview_url"] == "http://127.0.0.1:4100"
+    assert runs_response.json()["data"][0]["public_preview_url"] == "https://preview.example.trycloudflare.com"
     assert runs_response.json()["data"][0]["target_source"] == "repo_preview"
     assert runs_response.json()["data"][0]["browser_use_model"] == "claude-sonnet-4.6"
     assert runs_response.json()["data"][0]["evaluation_status"] == "skipped"
@@ -149,8 +156,45 @@ def test_run_falls_back_to_site_url_when_repo_preview_fails(client, fake_adapter
     assert latest_payload["status"] == "completed"
     assert latest_payload["target_source"] == "site"
     assert latest_payload["target_url"] == "https://example.com/"
+    assert latest_payload["local_preview_url"] is None
+    assert latest_payload["public_preview_url"] is None
     assert latest_payload["repo_build_status"] == "failed"
     assert "Local repo preview failed" in latest_payload["repo_build_error"]
+    assert fake_adapter.calls[0]["project_url"] == "https://example.com/"
+
+
+def test_run_falls_back_to_site_url_when_repo_preview_tunnel_fails(
+    client, fake_adapter, fake_tunnel_manager
+) -> None:
+    fake_tunnel_manager.fail_urls.add("http://127.0.0.1:4100")
+
+    project_response = client.post(
+        "/projects",
+        json={"name": "Tunnel fallback demo", "url": "https://example.com", "repo_url": "https://github.com/example/repo"},
+        headers=GUEST_HEADERS,
+    )
+    project_id = project_response.json()["data"]["id"]
+
+    run_response = client.post(f"/projects/{project_id}/runs", json={}, headers=GUEST_HEADERS)
+    run_id = run_response.json()["data"]["id"]
+
+    deadline = time.time() + 5
+    latest_payload: dict | None = None
+    while time.time() < deadline:
+        latest = client.get(f"/runs/{run_id}", headers=GUEST_HEADERS)
+        latest_payload = latest.json()["data"]
+        if latest_payload["status"] == "completed":
+            break
+        time.sleep(0.05)
+
+    assert latest_payload is not None
+    assert latest_payload["status"] == "completed"
+    assert latest_payload["target_source"] == "site"
+    assert latest_payload["target_url"] == "https://example.com/"
+    assert latest_payload["local_preview_url"] == "http://127.0.0.1:4100"
+    assert latest_payload["public_preview_url"] is None
+    assert latest_payload["repo_build_status"] == "failed"
+    assert "Repo preview tunnel failed." in latest_payload["repo_build_error"]
     assert fake_adapter.calls[0]["project_url"] == "https://example.com/"
 
 

@@ -90,9 +90,16 @@ export function RunList({ runs }: RunListProps) {
                   {run.completed_at ?? run.started_at ?? run.created_at}
                 </p>
                 {run.target_url ? (
-                  <p className="mt-2 max-w-[220px] truncate text-xs text-zinc-500">
-                    {run.target_source === "repo_preview" ? "Local preview" : "Target"}: {run.target_url}
-                  </p>
+                  <div className="mt-2 space-y-1">
+                    <p className="max-w-[220px] truncate text-xs text-zinc-500">
+                      {run.target_source === "repo_preview" ? "Audited preview" : "Target"}: {run.target_url}
+                    </p>
+                    {run.target_source === "repo_preview" && run.local_preview_url ? (
+                      <p className="max-w-[220px] truncate text-xs text-zinc-600">
+                        Local preview: {run.local_preview_url}
+                      </p>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
               <ArrowUpRight className="size-4 text-slate-400" />

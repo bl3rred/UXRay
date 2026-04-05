@@ -160,6 +160,12 @@ Relay command:
 py apps/fetch/run_relay.py
 ```
 
+Hosted Fetch requires two local processes:
+1. the mailbox-connected relay agent from `py -m uxray_fetch.relay_agent`
+2. the local HTTP relay from `py apps/fetch/run_relay.py`
+
+Before trusting the hosted path, confirm the configured `FETCH_RELAY_AGENT_ADDRESS` shows as active in Agentverse. If that mailbox relay agent is inactive, UXRay will now skip the long wait and fall back to the ASI path instead of timing out blindly.
+
 Relay mailbox agent setup:
 ```powershell
 Set-Location apps/fetch
